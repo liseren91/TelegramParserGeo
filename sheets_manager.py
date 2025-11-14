@@ -129,6 +129,7 @@ class SheetsManager:
                     post.get('link', ''),
                     post.get('views', 0),
                     post.get('likes', 0),
+                    post.get('reactions_detail', ''),
                     post.get('comments', 0)
                 ]
                 rows.append(row)

@@ -4,8 +4,14 @@ Handles all interactions with Telegram API using Telethon
 """
 from telethon import TelegramClient
 from telethon.tl.functions.channels import GetFullChannelRequest
-from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument, MessageMediaWebPage
-from datetime import datetime, timedelta
+from telethon.tl.types import (
+    MessageMediaPhoto,
+    MessageMediaDocument,
+    MessageMediaWebPage,
+    ReactionEmoji,
+    ReactionCustomEmoji
+)
+from datetime import datetime, timedelta, timezone
 import logging
 import asyncio
 
@@ -93,29 +99,37 @@ class TelegramParser:
         try:
             channel = await self.client.get_entity(channel_username)
             
-            # Calculate the date threshold
-            date_threshold = datetime.now() - timedelta(days=days)
+            # Calculate the date threshold (timezone-aware to match Telegram timestamps)
+            date_threshold = datetime.now(timezone.utc) - timedelta(days=days)
             
-            posts = []
+            collected_messages = []
             async for message in self.client.iter_messages(channel, limit=100):
-                # Stop if message is older than threshold
-                if message.date < date_threshold:
+                message_date = self._normalize_message_date(message.date)
+
+                if message_date < date_threshold:
                     break
                 
-                # Skip service messages
+                # Skip service messages (no text and no media)
                 if not message.message and not message.media:
                     continue
-                
+
+                collected_messages.append((message, message_date))
+
+            group_captions = self._build_group_caption_map(collected_messages)
+
+            posts = []
+            for message, message_date in collected_messages:
                 # Check if message has media
                 has_media = self._has_media(message)
                 
-                # Extract rubric (category) from message text or hashtags
-                rubric = self._extract_rubric(message)
+                # Determine content with grouped media support
+                content_text = self._get_message_content(message, group_captions)
                 
-                # Get reactions (likes)
-                likes = 0
-                if hasattr(message, 'reactions') and message.reactions:
-                    likes = sum(reaction.count for reaction in message.reactions.results)
+                # Extract rubric (category) from message text or fallback content
+                rubric = self._extract_rubric(message, fallback_text=content_text)
+                
+                # Get reactions info
+                likes, reactions_detail = self._parse_reactions(message)
                 
                 # Get comments count
                 comments = 0
@@ -125,14 +139,15 @@ class TelegramParser:
                 # Build post data
                 post = {
                     'channel_name': channel.title,
-                    'time': message.date.strftime('%H:%M:%S'),
-                    'date': message.date.strftime('%Y-%m-%d'),
+                    'time': message_date.strftime('%H:%M:%S'),
+                    'date': message_date.strftime('%Y-%m-%d'),
                     'rubric': rubric,
-                    'content': message.message or '[Медиа без текста]',
+                    'content': content_text,
                     'has_media': 'Да' if has_media else 'Нет',
                     'link': f'https://t.me/{channel_username}/{message.id}',
                     'views': message.views or 0,
                     'likes': likes,
+                    'reactions_detail': reactions_detail,
                     'comments': comments
                 }
                 
@@ -154,23 +169,94 @@ class TelegramParser:
         media_types = (MessageMediaPhoto, MessageMediaDocument)
         return isinstance(message.media, media_types)
     
-    def _extract_rubric(self, message):
+    def _extract_rubric(self, message, fallback_text=None):
         """Extract rubric/category from message"""
-        if not message.message:
+        text_source = message.message or fallback_text
+        if not text_source:
             return 'Без рубрики'
         
         # Look for hashtags
-        hashtags = [word for word in message.message.split() if word.startswith('#')]
+        hashtags = [word for word in text_source.split() if word.startswith('#')]
         if hashtags:
             return ', '.join(hashtags[:3])  # Return first 3 hashtags
         
         # If no hashtags, try to extract from first line
-        first_line = message.message.split('\n')[0]
+        first_line = text_source.split('\n')[0]
         if len(first_line) < 100:  # If first line is short, it might be a title/rubric
             return first_line
         
         return 'Без рубрики'
     
+    def _parse_reactions(self, message):
+        """Calculate total reactions and build details string"""
+        reactions = getattr(message, 'reactions', None)
+        if not reactions or not getattr(reactions, 'results', None):
+            return 0, ''
+
+        total = 0
+        details = []
+        for result in reactions.results:
+            count = getattr(result, 'count', 0) or 0
+            reaction_obj = getattr(result, 'reaction', None)
+            label = self._format_reaction_label(reaction_obj)
+
+            if count:
+                total += count
+
+            if label:
+                details.append(f"{label}: {count}")
+
+        return total, ', '.join(details)
+
+    def _format_reaction_label(self, reaction):
+        """Format reaction object to human-friendly label"""
+        if not reaction:
+            return ''
+
+        emoticon = getattr(reaction, 'emoticon', None)
+        if emoticon:
+            return emoticon
+
+        # Custom emoji reactions have document_id
+        document_id = getattr(reaction, 'document_id', None)
+        if document_id:
+            return f'custom_{document_id}'
+
+        # Fallback to class name
+        return reaction.__class__.__name__
+
+    def _normalize_message_date(self, message_date):
+        """Normalize message date to timezone-aware datetime"""
+        if isinstance(message_date, datetime):
+            if message_date.tzinfo is None:
+                return message_date.replace(tzinfo=timezone.utc)
+            return message_date
+        return datetime.now(timezone.utc)
+
+    def _build_group_caption_map(self, collected_messages):
+        """Build map of grouped_id -> caption text"""
+        captions = {}
+        for message, _ in collected_messages:
+            grouped_id = getattr(message, 'grouped_id', None)
+            text = (message.message or '').strip()
+            if grouped_id and text and grouped_id not in captions:
+                captions[grouped_id] = message.message
+        return captions
+
+    def _get_message_content(self, message, group_captions):
+        """Return message content considering grouped media captions"""
+        if message.message:
+            return message.message
+        
+        grouped_id = getattr(message, 'grouped_id', None)
+        if grouped_id and grouped_id in group_captions:
+            return group_captions[grouped_id]
+        
+        if message.media:
+            return '[Медиа без текста]'
+        
+        return ''
+
     async def get_all_channels_info(self, channels):
         """
         Get information for all channels

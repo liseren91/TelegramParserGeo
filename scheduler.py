@@ -31,11 +31,8 @@ def run_update():
 
 def start_scheduler():
     """Start the scheduler"""
-    # Schedule daily update at 9:00 AM
-    schedule.every().day.at("09:00").do(run_update)
-    
-    # You can add multiple schedule times if needed:
-    # schedule.every().day.at("18:00").do(run_update)  # Evening update
+    # Schedule update every hour
+    schedule.every().hour.at(":00").do(run_update)
     
     logger.info("Scheduler started. Waiting for scheduled times...")
     logger.info("Scheduled updates:")
