@@ -2,6 +2,7 @@
 Configuration module for Telegram Parser
 """
 import base64
+import gzip
 import os
 from dotenv import load_dotenv
 
@@ -108,6 +109,13 @@ def _write_base64_file(encoded_value, target_path, description):
 
     try:
         decoded_bytes = base64.b64decode(encoded_value)
+
+        if decoded_bytes.startswith(b'\x1f\x8b'):
+            try:
+                decoded_bytes = gzip.decompress(decoded_bytes)
+            except OSError:
+                pass
+
         target_dir = os.path.dirname(target_path)
         if target_dir:
             os.makedirs(target_dir, exist_ok=True)
