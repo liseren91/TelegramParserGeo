@@ -1,0 +1,9 @@
+telethon==1.36.0
+gspread==6.1.2
+google-auth==2.34.0
+google-auth-oauthlib==1.2.1
+google-auth-httplib2==0.2.0
+python-dotenv==1.0.1
+schedule==1.2.2
+requests==2.32.3
+
