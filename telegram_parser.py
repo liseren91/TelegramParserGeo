@@ -116,9 +116,12 @@ class TelegramParser:
                 collected_messages.append((message, message_date))
 
             group_captions = self._build_group_caption_map(collected_messages)
+            message_metrics, group_metrics = self._build_group_metrics(collected_messages)
 
             posts = []
             for message, message_date in collected_messages:
+                grouped_id = getattr(message, 'grouped_id', None)
+
                 # Check if message has media
                 has_media = self._has_media(message)
                 
@@ -127,14 +130,21 @@ class TelegramParser:
                 
                 # Extract rubric (category) from message text or fallback content
                 rubric = self._extract_rubric(message, fallback_text=content_text)
-                
-                # Get reactions info
-                likes, reactions_detail = self._parse_reactions(message)
-                
-                # Get comments count
-                comments = 0
-                if hasattr(message, 'replies') and message.replies:
-                    comments = message.replies.replies if hasattr(message.replies, 'replies') else 0
+
+                metrics = message_metrics.get(message.id, {
+                    'likes': 0,
+                    'reactions_detail': '',
+                    'comments': 0
+                })
+                likes = metrics['likes']
+                reactions_detail = metrics['reactions_detail']
+                comments = metrics['comments']
+
+                if grouped_id and grouped_id in group_metrics:
+                    group_data = group_metrics[grouped_id]
+                    likes = group_data['likes']
+                    reactions_detail = group_data['reactions_detail']
+                    comments = max(comments, group_data['comments'])
                 
                 # Build post data
                 post = {
@@ -225,6 +235,20 @@ class TelegramParser:
         # Fallback to class name
         return reaction.__class__.__name__
 
+    def _get_comments_count(self, message):
+        """Extract comments count from message replies"""
+        replies = getattr(message, 'replies', None)
+        if not replies:
+            return 0
+
+        if hasattr(replies, 'replies') and replies.replies:
+            return replies.replies
+
+        if hasattr(replies, 'comments') and replies.comments:
+            return replies.comments
+
+        return 0
+
     def _normalize_message_date(self, message_date):
         """Normalize message date to timezone-aware datetime"""
         if isinstance(message_date, datetime):
@@ -256,6 +280,46 @@ class TelegramParser:
             return '[Медиа без текста]'
         
         return ''
+
+    def _build_group_metrics(self, collected_messages):
+        """Build per-message metrics cache and grouped media aggregates"""
+        message_metrics = {}
+        group_metrics = {}
+
+        for message, _ in collected_messages:
+            likes, reactions_detail = self._parse_reactions(message)
+            comments = self._get_comments_count(message)
+
+            message_metrics[message.id] = {
+                'likes': likes,
+                'reactions_detail': reactions_detail,
+                'comments': comments
+            }
+
+            grouped_id = getattr(message, 'grouped_id', None)
+            if not grouped_id:
+                continue
+
+            if likes == 0 and comments == 0 and not reactions_detail:
+                continue
+
+            current = group_metrics.get(grouped_id)
+            should_replace = (
+                current is None
+                or likes > current['likes']
+                or comments > current['comments']
+                or (likes == current['likes'] and comments == current['comments']
+                    and reactions_detail and not current['reactions_detail'])
+            )
+
+            if should_replace:
+                group_metrics[grouped_id] = {
+                    'likes': likes,
+                    'reactions_detail': reactions_detail,
+                    'comments': comments
+                }
+
+        return message_metrics, group_metrics
 
     async def get_all_channels_info(self, channels):
         """

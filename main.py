@@ -4,7 +4,7 @@ Orchestrates data collection and updates to Google Sheets
 """
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import config
 from telegram_parser import TelegramParser
 from sheets_manager import SheetsManager
@@ -96,25 +96,28 @@ async def update_posts(days=1):
         # Ensure posts sheet exists
         sheets.ensure_sheet_exists(config.POSTS_SHEET_NAME, config.POSTS_HEADERS)
         
-        # Get existing post links to avoid duplicates
-        existing_links = sheets.get_existing_post_links(config.POSTS_SHEET_NAME)
-        logger.info(f"Found {len(existing_links)} existing posts in sheet")
-        
         # Get all posts
         logger.info(f"Fetching posts from {len(config.TELEGRAM_CHANNELS)} channels...")
         all_posts = await parser.get_all_posts(config.TELEGRAM_CHANNELS, days)
         
-        # Filter out duplicates
-        new_posts = [post for post in all_posts if post['link'] not in existing_links]
+        logger.info(f"Processing {len(all_posts)} posts for upsert")
         
-        logger.info(f"Found {len(all_posts)} total posts, {len(new_posts)} new posts")
-        
-        # Append new posts to Google Sheets
-        if new_posts:
-            sheets.append_posts(config.POSTS_SHEET_NAME, new_posts)
-            logger.info(f"✓ Successfully added {len(new_posts)} new posts")
+        updated_count, appended_count = sheets.append_posts(config.POSTS_SHEET_NAME, all_posts)
+        if updated_count or appended_count:
+            logger.info(
+                f"✓ Updated stats for {updated_count} posts and added {appended_count} new posts"
+            )
         else:
-            logger.info("No new posts to add")
+            logger.info("No posts required updates or additions")
+
+        active_links = {post['link'] for post in all_posts if post.get('link')}
+        min_date = datetime.now() - timedelta(days=days + 1)
+        deleted_changes = sheets.mark_deleted_posts(
+            config.POSTS_SHEET_NAME,
+            active_links,
+            min_date=min_date
+        )
+        logger.info(f"Checked deleted posts; {deleted_changes} rows updated")
         
         # Clean up old posts (optional, keeps last 30 days)
         # sheets.clear_old_posts(config.POSTS_SHEET_NAME, days_to_keep=30)

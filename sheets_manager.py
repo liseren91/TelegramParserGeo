@@ -107,40 +107,145 @@ class SheetsManager:
     
     def append_posts(self, sheet_name, posts_data):
         """
-        Append posts to the posts sheet
+        Upsert posts in the posts sheet: update existing rows and append new ones.
         
         Args:
             sheet_name: Name of the worksheet
             posts_data: List of dictionaries with post information
+        
+        Returns:
+            tuple: (updated_count, appended_count)
         """
         try:
             worksheet = self.spreadsheet.worksheet(sheet_name)
-            
-            # Prepare data rows
-            rows = []
+
+            all_data = worksheet.get_all_values()
+            headers = all_data[0] if all_data else []
+            link_col_index = headers.index('Ссылка на пост') if 'Ссылка на пост' in headers else 6
+
+            existing_links = {}
+            for row_number, row in enumerate(all_data[1:], start=2):
+                if len(row) > link_col_index:
+                    link = row[link_col_index]
+                    if link:
+                        existing_links[link] = row_number
+
+            updates = []
+            new_rows = []
+
             for post in posts_data:
-                row = [
-                    post.get('channel_name', ''),
-                    post.get('time', ''),
-                    post.get('date', ''),
-                    post.get('rubric', ''),
-                    post.get('content', ''),
-                    post.get('has_media', 'Нет'),
-                    post.get('link', ''),
-                    post.get('views', 0),
-                    post.get('likes', 0),
-                    post.get('reactions_detail', ''),
-                    post.get('comments', 0)
-                ]
-                rows.append(row)
-            
-            # Append rows
-            if rows:
-                worksheet.append_rows(rows, value_input_option='USER_ENTERED')
-                logger.info(f"Appended {len(rows)} posts to '{sheet_name}'")
-            
+                row = self._build_post_row(post)
+                link = post.get('link')
+
+                if not link:
+                    continue
+
+                if link in existing_links:
+                    row_number = existing_links[link]
+                    cell_range = f"A{row_number}:{self._col_letter(len(row))}{row_number}"
+                    updates.append({
+                        'range': cell_range,
+                        'values': [row]
+                    })
+                else:
+                    new_rows.append(row)
+
+            updated_count = 0
+            if updates:
+                worksheet.batch_update(updates, value_input_option='USER_ENTERED')
+                updated_count = len(updates)
+                logger.info(f"Updated {updated_count} existing posts in '{sheet_name}'")
+
+            appended_count = 0
+            if new_rows:
+                worksheet.append_rows(new_rows, value_input_option='USER_ENTERED')
+                appended_count = len(new_rows)
+                logger.info(f"Appended {appended_count} new posts to '{sheet_name}'")
+
+            return updated_count, appended_count
+
         except Exception as e:
             logger.error(f"Error appending posts: {e}")
+            raise
+    
+    def _build_post_row(self, post):
+        """Prepare a post row matching the sheet headers"""
+        return [
+            post.get('channel_name', ''),
+            post.get('time', ''),
+            post.get('date', ''),
+            post.get('rubric', ''),
+            post.get('content', ''),
+            post.get('has_media', 'Нет'),
+            post.get('link', ''),
+            post.get('views', 0),
+            post.get('likes', 0),
+            post.get('reactions_detail', ''),
+            post.get('comments', 0),
+            post.get('deleted', 'Нет')
+        ]
+
+    def mark_deleted_posts(self, sheet_name, active_links, min_date=None):
+        """
+        Mark posts as deleted if they were previously saved but not found in the latest run.
+
+        Args:
+            sheet_name: Worksheet name
+            active_links: Set of links that still exist in channels
+            min_date: datetime threshold; only rows with date >= min_date are checked
+        """
+        try:
+            if not active_links:
+                logger.info("No active links provided for deletion check; skipping")
+                return 0
+
+            worksheet = self.spreadsheet.worksheet(sheet_name)
+            all_data = worksheet.get_all_values()
+
+            if len(all_data) <= 1:
+                return 0
+
+            headers = all_data[0]
+            link_idx = headers.index('Ссылка на пост') if 'Ссылка на пост' in headers else 6
+            deleted_idx = headers.index('Удален') if 'Удален' in headers else len(headers) - 1
+            date_idx = headers.index('Дата публикации') if 'Дата публикации' in headers else 2
+
+            updates = []
+            for row_number, row in enumerate(all_data[1:], start=2):
+                if len(row) <= link_idx:
+                    continue
+                link = row[link_idx]
+                if not link:
+                    continue
+
+                if min_date and len(row) > date_idx:
+                    try:
+                        row_date = datetime.strptime(row[date_idx], '%Y-%m-%d')
+                    except ValueError:
+                        row_date = None
+                    if row_date and row_date < min_date:
+                        continue
+
+                should_mark_deleted = link not in active_links
+                desired_value = 'Да' if should_mark_deleted else 'Нет'
+
+                current_value = row[deleted_idx] if len(row) > deleted_idx else ''
+                if current_value == desired_value:
+                    continue
+
+                cell_ref = f"{self._col_letter(deleted_idx + 1)}{row_number}"
+                updates.append({
+                    'range': cell_ref,
+                    'values': [[desired_value]]
+                })
+
+            if updates:
+                worksheet.batch_update(updates, value_input_option='USER_ENTERED')
+                logger.info(f"Marked {len(updates)} posts as deleted/restored in '{sheet_name}'")
+            return len(updates)
+
+        except Exception as e:
+            logger.error(f"Error marking deleted posts: {e}")
             raise
     
     def clear_old_posts(self, sheet_name, days_to_keep=30):
