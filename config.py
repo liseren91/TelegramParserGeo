@@ -1,6 +1,7 @@
 """
 Configuration module for Telegram Parser
 """
+import base64
 import os
 from dotenv import load_dotenv
 
@@ -15,6 +16,7 @@ TELEGRAM_PHONE = os.getenv('TELEGRAM_PHONE')
 # Google Sheets configuration
 GOOGLE_SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
 GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv('GOOGLE_SERVICE_ACCOUNT_FILE', 'service_account.json')
+GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON_BASE64')
 
 # Telegram channels to parse
 TELEGRAM_CHANNELS = [
@@ -70,6 +72,36 @@ POSTS_HEADERS = [
     'Удален'
 ]
 
+# Internal flag to capture service account provisioning issues
+_SERVICE_ACCOUNT_INIT_ERROR = None
+
+
+def _ensure_service_account_file():
+    """
+    Create the Google service account file from the provided Base64 string
+    when it doesn't already exist on disk.
+    """
+    global _SERVICE_ACCOUNT_INIT_ERROR
+
+    if not GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 or os.path.exists(GOOGLE_SERVICE_ACCOUNT_FILE):
+        return
+
+    try:
+        decoded_bytes = base64.b64decode(GOOGLE_SERVICE_ACCOUNT_JSON_BASE64)
+        target_dir = os.path.dirname(GOOGLE_SERVICE_ACCOUNT_FILE)
+        if target_dir:
+            os.makedirs(target_dir, exist_ok=True)
+        with open(GOOGLE_SERVICE_ACCOUNT_FILE, 'wb') as file:
+            file.write(decoded_bytes)
+    except Exception as exc:
+        _SERVICE_ACCOUNT_INIT_ERROR = (
+            f"Failed to create Google service account file from "
+            f"GOOGLE_SERVICE_ACCOUNT_JSON_BASE64: {exc}"
+        )
+
+
+_ensure_service_account_file()
+
 def validate_config():
     """Validate that all required configuration is present"""
     errors = []
@@ -82,6 +114,8 @@ def validate_config():
         errors.append("TELEGRAM_PHONE not set in .env file")
     if not GOOGLE_SHEET_ID:
         errors.append("GOOGLE_SHEET_ID not set in .env file")
+    if _SERVICE_ACCOUNT_INIT_ERROR:
+        errors.append(_SERVICE_ACCOUNT_INIT_ERROR)
     if not os.path.exists(GOOGLE_SERVICE_ACCOUNT_FILE):
         errors.append(f"Google service account file not found: {GOOGLE_SERVICE_ACCOUNT_FILE}")
     
