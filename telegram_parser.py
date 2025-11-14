@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramParser:
-    def __init__(self, api_id, api_hash, phone):
+    def __init__(self, api_id, api_hash, phone, session_name='session'):
         """
         Initialize Telegram client
         
@@ -28,11 +28,13 @@ class TelegramParser:
             api_id: Telegram API ID
             api_hash: Telegram API hash
             phone: Phone number for authentication
+            session_name: Session storage name/path (without .session)
         """
         self.api_id = api_id
         self.api_hash = api_hash
         self.phone = phone
-        self.client = TelegramClient('session', api_id, api_hash)
+        self.session_name = session_name
+        self.client = TelegramClient(self.session_name, api_id, api_hash)
     
     async def start(self):
         """Start the Telegram client"""

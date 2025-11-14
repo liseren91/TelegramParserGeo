@@ -34,7 +34,8 @@ async def update_channels_info():
         parser = TelegramParser(
             config.TELEGRAM_API_ID,
             config.TELEGRAM_API_HASH,
-            config.TELEGRAM_PHONE
+            config.TELEGRAM_PHONE,
+            session_name=config.TELEGRAM_SESSION_NAME
         )
         await parser.start()
         
@@ -83,7 +84,8 @@ async def update_posts(days=1):
         parser = TelegramParser(
             config.TELEGRAM_API_ID,
             config.TELEGRAM_API_HASH,
-            config.TELEGRAM_PHONE
+            config.TELEGRAM_PHONE,
+            session_name=config.TELEGRAM_SESSION_NAME
         )
         await parser.start()
         

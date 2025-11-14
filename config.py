@@ -13,6 +13,27 @@ TELEGRAM_API_ID = os.getenv('TELEGRAM_API_ID')
 TELEGRAM_API_HASH = os.getenv('TELEGRAM_API_HASH')
 TELEGRAM_PHONE = os.getenv('TELEGRAM_PHONE')
 
+# Telegram session configuration (used for headless deployments)
+_TELEGRAM_SESSION_FILE_ENV = os.getenv('TELEGRAM_SESSION_FILE')
+_TELEGRAM_SESSION_NAME_ENV = os.getenv('TELEGRAM_SESSION_NAME')
+
+if _TELEGRAM_SESSION_FILE_ENV:
+    if _TELEGRAM_SESSION_FILE_ENV.endswith('.session'):
+        TELEGRAM_SESSION_FILE = _TELEGRAM_SESSION_FILE_ENV
+        TELEGRAM_SESSION_NAME = _TELEGRAM_SESSION_FILE_ENV[:-len('.session')]
+    else:
+        TELEGRAM_SESSION_FILE = f"{_TELEGRAM_SESSION_FILE_ENV}.session"
+        TELEGRAM_SESSION_NAME = _TELEGRAM_SESSION_FILE_ENV
+else:
+    TELEGRAM_SESSION_NAME = _TELEGRAM_SESSION_NAME_ENV or 'session'
+    if TELEGRAM_SESSION_NAME.endswith('.session'):
+        TELEGRAM_SESSION_FILE = TELEGRAM_SESSION_NAME
+        TELEGRAM_SESSION_NAME = TELEGRAM_SESSION_NAME[:-len('.session')]
+    else:
+        TELEGRAM_SESSION_FILE = f"{TELEGRAM_SESSION_NAME}.session"
+
+TELEGRAM_SESSION_BASE64 = os.getenv('TELEGRAM_SESSION_BASE64')
+
 # Google Sheets configuration
 GOOGLE_SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
 GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv('GOOGLE_SERVICE_ACCOUNT_FILE', 'service_account.json')
@@ -72,35 +93,43 @@ POSTS_HEADERS = [
     'Удален'
 ]
 
-# Internal flag to capture service account provisioning issues
+# Track initialization issues for files reconstructed from Base64
 _SERVICE_ACCOUNT_INIT_ERROR = None
+_TELEGRAM_SESSION_INIT_ERROR = None
 
 
-def _ensure_service_account_file():
+def _write_base64_file(encoded_value, target_path, description):
     """
-    Create the Google service account file from the provided Base64 string
-    when it doesn't already exist on disk.
+    Create a file from a Base64-encoded string if the target does not exist.
+    Returns an error message on failure, otherwise None.
     """
-    global _SERVICE_ACCOUNT_INIT_ERROR
-
-    if not GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 or os.path.exists(GOOGLE_SERVICE_ACCOUNT_FILE):
-        return
+    if not encoded_value or os.path.exists(target_path):
+        return None
 
     try:
-        decoded_bytes = base64.b64decode(GOOGLE_SERVICE_ACCOUNT_JSON_BASE64)
-        target_dir = os.path.dirname(GOOGLE_SERVICE_ACCOUNT_FILE)
+        decoded_bytes = base64.b64decode(encoded_value)
+        target_dir = os.path.dirname(target_path)
         if target_dir:
             os.makedirs(target_dir, exist_ok=True)
-        with open(GOOGLE_SERVICE_ACCOUNT_FILE, 'wb') as file:
+        with open(target_path, 'wb') as file:
             file.write(decoded_bytes)
     except Exception as exc:
-        _SERVICE_ACCOUNT_INIT_ERROR = (
-            f"Failed to create Google service account file from "
-            f"GOOGLE_SERVICE_ACCOUNT_JSON_BASE64: {exc}"
-        )
+        return f"Failed to create {description} from Base64: {exc}"
+
+    return None
 
 
-_ensure_service_account_file()
+_SERVICE_ACCOUNT_INIT_ERROR = _write_base64_file(
+    GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
+    GOOGLE_SERVICE_ACCOUNT_FILE,
+    "Google service account file"
+)
+
+_TELEGRAM_SESSION_INIT_ERROR = _write_base64_file(
+    TELEGRAM_SESSION_BASE64,
+    TELEGRAM_SESSION_FILE,
+    "Telegram session file"
+)
 
 def validate_config():
     """Validate that all required configuration is present"""
@@ -116,6 +145,8 @@ def validate_config():
         errors.append("GOOGLE_SHEET_ID not set in .env file")
     if _SERVICE_ACCOUNT_INIT_ERROR:
         errors.append(_SERVICE_ACCOUNT_INIT_ERROR)
+    if TELEGRAM_SESSION_BASE64 and _TELEGRAM_SESSION_INIT_ERROR:
+        errors.append(_TELEGRAM_SESSION_INIT_ERROR)
     if not os.path.exists(GOOGLE_SERVICE_ACCOUNT_FILE):
         errors.append(f"Google service account file not found: {GOOGLE_SERVICE_ACCOUNT_FILE}")
     

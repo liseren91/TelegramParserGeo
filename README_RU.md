@@ -100,6 +100,19 @@
    GOOGLE_SERVICE_ACCOUNT_FILE=service_account.json
    ```
 
+### Шаг 5.1: Готовим Telegram-сессию для Railway/серверов
+
+1. Запустите `python main.py` локально и пройдите авторизацию в Telegram. После успешного входа в папке проекта появится файл `session.session`.
+2. Преобразуйте файл в Base64. В PowerShell это можно сделать так:
+   ```
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes("session.session"))
+   ```
+   Скопируйте полученную строку (её лучше хранить как секрет).
+3. В Railway → Variables добавьте переменную `TELEGRAM_SESSION_BASE64=<ваша строка>`.
+4. (Опционально) если хотите хранить сессию в другом файле, задайте `TELEGRAM_SESSION_NAME`. По умолчанию используется `session`, что соответствует файлу `session.session`.
+
+> При запуске в headless-средах (Railway, Docker, cron) Telethon не сможет спросить код подтверждения. Поэтому заранее подготовленная `session.session` позволяет запускаться без ручного ввода.
+
 ### Шаг 6: Первый запуск
 
 1. Откройте командную строку в папке проекта

@@ -239,6 +239,21 @@ schedule.every(30).minutes.do(run_update)
 - Не удаляйте его, иначе придется авторизоваться заново
 - Не публикуйте этот файл
 
+#### Использование на сервере (Railway, Docker, cron)
+
+Telethon не может спросить код подтверждения в headless-средах, поэтому нужно заранее сохранить готовую сессию:
+
+1. Запустите `python main.py` локально и пройдите авторизацию.
+2. Убедитесь, что в корне проекта появился файл `session.session`.
+3. Преобразуйте файл в Base64. Для PowerShell подойдёт команда:
+   ```
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes("session.session"))
+   ```
+4. Сохраните полученную строку в переменную окружения `TELEGRAM_SESSION_BASE64` (например, в Railway → Variables).
+5. (Опционально) если хотите изменить имя/путь файла, задайте `TELEGRAM_SESSION_NAME`. По умолчанию используется `session`, что соответствует файлу `session.session`.
+
+> На сервере скрипт восстановит `session.session` из переменной `TELEGRAM_SESSION_BASE64`, и вход в Telegram пройдёт без ручного ввода кода.
+
 ## 🐛 Решение проблем
 
 ### "Configuration errors"
