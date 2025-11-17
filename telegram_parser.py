@@ -243,11 +243,13 @@ class TelegramParser:
         if not replies:
             return 0
 
-        if hasattr(replies, 'replies') and replies.replies:
-            return replies.replies
+        replies_count = getattr(replies, 'replies', None)
+        if isinstance(replies_count, int):
+            return max(replies_count, 0)
 
-        if hasattr(replies, 'comments') and replies.comments:
-            return replies.comments
+        comments_count = getattr(replies, 'comments', None)
+        if isinstance(comments_count, int):
+            return max(comments_count, 0)
 
         return 0
 
