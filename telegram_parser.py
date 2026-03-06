@@ -3,6 +3,7 @@ Telegram Parser module
 Handles all interactions with Telegram API using Telethon
 """
 from telethon import TelegramClient
+from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.types import (
     MessageMediaPhoto,
@@ -35,6 +36,17 @@ class TelegramParser:
         self.phone = phone
         self.session_name = session_name
         self.client = TelegramClient(self.session_name, api_id, api_hash)
+    
+    def _build_error_channel_info(self, channel_username, message):
+        """Build fallback channel info payload for failed requests."""
+        return {
+            'name': channel_username,
+            'username': channel_username,
+            'link': f'https://t.me/{channel_username}',
+            'subscribers': 0,
+            'description': message,
+            'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
     
     async def start(self):
         """Start the Telegram client"""
@@ -76,16 +88,15 @@ class TelegramParser:
             logger.info(f"Retrieved info for channel: {channel_username}")
             return info
             
+        except FloodWaitError:
+            # Let the caller decide how to handle global throttling.
+            raise
+        except (UsernameInvalidError, UsernameNotOccupiedError) as e:
+            logger.warning(f"Channel {channel_username} is invalid or unavailable: {e}")
+            return self._build_error_channel_info(channel_username, f'Channel unavailable: {str(e)}')
         except Exception as e:
             logger.error(f"Error getting info for channel {channel_username}: {e}")
-            return {
-                'name': channel_username,
-                'username': channel_username,
-                'link': f'https://t.me/{channel_username}',
-                'subscribers': 0,
-                'description': f'Error: {str(e)}',
-                'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
+            return self._build_error_channel_info(channel_username, f'Error: {str(e)}')
     
     async def get_recent_posts(self, channel_username, days=1):
         """
@@ -168,6 +179,9 @@ class TelegramParser:
             logger.info(f"Retrieved {len(posts)} posts from {channel_username}")
             return posts
             
+        except FloodWaitError:
+            # Let caller handle global throttling strategy.
+            raise
         except Exception as e:
             logger.error(f"Error getting posts from channel {channel_username}: {e}")
             return []
@@ -336,8 +350,35 @@ class TelegramParser:
             list: List of channel information dictionaries
         """
         all_info = []
-        for channel in channels:
-            info = await self.get_channel_info(channel)
+        flood_wait_seconds = None
+
+        for idx, channel in enumerate(channels):
+            if flood_wait_seconds is not None:
+                all_info.append(
+                    self._build_error_channel_info(
+                        channel,
+                        f'Skipped due to Telegram FloodWait ({flood_wait_seconds}s)'
+                    )
+                )
+                continue
+
+            try:
+                info = await self.get_channel_info(channel)
+            except FloodWaitError as e:
+                flood_wait_seconds = getattr(e, 'seconds', None) or 0
+                remaining = len(channels) - idx - 1
+                logger.error(
+                    "Telegram FloodWait while resolving '%s': %ss. "
+                    "Skipping remaining %s channels in this run.",
+                    channel,
+                    flood_wait_seconds,
+                    remaining
+                )
+                info = self._build_error_channel_info(
+                    channel,
+                    f'FloodWait: need to wait {flood_wait_seconds}s'
+                )
+
             all_info.append(info)
             # Small delay to avoid rate limiting
             await asyncio.sleep(1)
@@ -356,8 +397,29 @@ class TelegramParser:
             list: List of all posts from all channels
         """
         all_posts = []
+        flood_wait_seconds = None
+
         for channel in channels:
-            posts = await self.get_recent_posts(channel, days)
+            if flood_wait_seconds is not None:
+                logger.warning(
+                    "Skipping posts fetch for %s due to active FloodWait (%ss)",
+                    channel,
+                    flood_wait_seconds
+                )
+                continue
+
+            try:
+                posts = await self.get_recent_posts(channel, days)
+            except FloodWaitError as e:
+                flood_wait_seconds = getattr(e, 'seconds', None) or 0
+                logger.error(
+                    "Telegram FloodWait while fetching posts for '%s': %ss. "
+                    "Skipping remaining channels in this run.",
+                    channel,
+                    flood_wait_seconds
+                )
+                continue
+
             all_posts.extend(posts)
             # Small delay to avoid rate limiting
             await asyncio.sleep(1)
