@@ -50,7 +50,9 @@ def _set_cooldown_seconds(seconds):
 
 @app.route("/", methods=["GET"])
 def index():
-    return render_template("index.html")
+    sheet_id = config.GOOGLE_SHEET_ID
+    sheet_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}" if sheet_id else None
+    return render_template("index.html", sheet_url=sheet_url)
 
 
 @app.route("/api/parse", methods=["POST"])

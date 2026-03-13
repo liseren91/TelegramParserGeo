@@ -75,12 +75,35 @@
     .err {
       color: #b3261e;
     }
+    .sheet-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 14px;
+      padding: 8px 14px;
+      border-radius: 8px;
+      background: #e8f5e9;
+      color: #1b7d3a;
+      font-weight: 600;
+      font-size: 14px;
+      text-decoration: none;
+      transition: background .15s;
+    }
+    .sheet-link:hover {
+      background: #c8e6c9;
+    }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>Парсинг Telegram каналов (10 часов)</h1>
     <p>Вставьте каналы списком (по строкам, через запятую, @username или ссылками t.me) и/или загрузите .txt/.csv файл.</p>
+    {% if sheet_url %}
+    <a class="sheet-link" href="{{ sheet_url }}" target="_blank" rel="noopener">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M3 3h18v18H3V3zm2 8h6v2H5v-2zm8 0h6v2h-6v-2zm-8 4h6v2H5v-2zm8 0h6v2h-6v-2zm-8-8h6v2H5V7zm8 0h6v2h-6V7z" fill="currentColor"/></svg>
+      Открыть Google Таблицу с результатами
+    </a>
+    {% endif %}
 
     <form id="parse-form">
       <label for="channels">Список каналов</label>
