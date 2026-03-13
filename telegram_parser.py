@@ -17,6 +17,8 @@ import logging
 import asyncio
 import random
 
+from flood_tracker import record_flood_wait
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -372,6 +374,7 @@ class TelegramParser:
                 info = await self.get_channel_info(channel)
             except FloodWaitError as e:
                 flood_wait_seconds = getattr(e, 'seconds', None) or 0
+                record_flood_wait(flood_wait_seconds)
                 remaining = len(channels) - idx - 1
                 logger.error(
                     "Telegram FloodWait while resolving '%s': %ss. "
@@ -434,6 +437,7 @@ class TelegramParser:
                     posts = await self.get_recent_posts(channel, days=days, hours=hours)
                 except FloodWaitError as e:
                     self.last_flood_wait_seconds = getattr(e, 'seconds', None) or 0
+                    record_flood_wait(self.last_flood_wait_seconds)
                     logger.error(
                         "Telegram FloodWait while fetching posts for '%s': %ss. "
                         "Stopping current run.",

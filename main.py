@@ -4,10 +4,12 @@ Orchestrates data collection and updates to Google Sheets
 """
 import asyncio
 import logging
+import random
 from datetime import datetime, timedelta
 import config
 from telegram_parser import TelegramParser
 from sheets_manager import SheetsManager
+from flood_tracker import is_flood_wait_active, get_flood_wait_remaining
 
 logging.basicConfig(
     level=logging.INFO,
@@ -95,9 +97,12 @@ async def update_channels_info():
         # Ensure channels sheet exists
         sheets.ensure_sheet_exists(config.CHANNELS_SHEET_NAME, config.CHANNELS_HEADERS)
         
-        # Get all channels info
-        logger.info(f"Fetching info for {len(config.TELEGRAM_CHANNELS)} channels...")
-        channels_info = await parser.get_all_channels_info(config.TELEGRAM_CHANNELS)
+        # Randomize channel order to spread API load and avoid the same
+        # channel always being first when a FloodWait occurs.
+        channels = list(config.TELEGRAM_CHANNELS)
+        random.shuffle(channels)
+        logger.info(f"Fetching info for {len(channels)} channels...")
+        channels_info = await parser.get_all_channels_info(channels)
         
         # Update Google Sheets
         sheets.update_channels_info(config.CHANNELS_SHEET_NAME, channels_info)
@@ -145,8 +150,9 @@ async def update_posts(days=1):
         # Ensure posts sheet exists
         sheets.ensure_sheet_exists(config.POSTS_SHEET_NAME, config.POSTS_HEADERS)
         
-        # Get all posts
-        logger.info(f"Fetching posts from {len(config.TELEGRAM_CHANNELS)} channels...")
+        channels = list(config.TELEGRAM_CHANNELS)
+        random.shuffle(channels)
+        logger.info(f"Fetching posts from {len(channels)} channels...")
         per_channel_delay_range = _normalize_delay_range(
             config.PARSER_CHANNEL_DELAY_MIN_SEC,
             config.PARSER_CHANNEL_DELAY_MAX_SEC
@@ -156,7 +162,7 @@ async def update_posts(days=1):
             config.PARSER_BATCH_DELAY_MAX_SEC
         )
         all_posts = await parser.get_all_posts(
-            config.TELEGRAM_CHANNELS,
+            channels,
             days=days,
             batch_size=config.PARSER_BATCH_SIZE,
             per_channel_delay_range=per_channel_delay_range,
@@ -290,6 +296,15 @@ async def full_update():
     logger.info("=" * 70)
     logger.info(f"STARTING FULL UPDATE - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 70)
+
+    remaining = get_flood_wait_remaining()
+    if remaining > 0:
+        logger.warning(
+            "Skipping full update: Telegram FloodWait still active for %d s (~%.1f h)",
+            remaining,
+            remaining / 3600,
+        )
+        return
     
     try:
         # Update channels info

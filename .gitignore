@@ -43,6 +43,9 @@ wheels/
 *.log
 logs/
 
+# FloodWait tracker (runtime state)
+.flood_wait.json
+
 # OS
 .DS_Store
 Thumbs.db
