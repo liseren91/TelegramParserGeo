@@ -15,6 +15,7 @@ from telethon.tl.types import (
 from datetime import datetime, timedelta, timezone
 import logging
 import asyncio
+import random
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ class TelegramParser:
         self.phone = phone
         self.session_name = session_name
         self.client = TelegramClient(self.session_name, api_id, api_hash)
+        self.last_flood_wait_seconds = 0
     
     def _build_error_channel_info(self, channel_username, message):
         """Build fallback channel info payload for failed requests."""
@@ -98,13 +100,14 @@ class TelegramParser:
             logger.error(f"Error getting info for channel {channel_username}: {e}")
             return self._build_error_channel_info(channel_username, f'Error: {str(e)}')
     
-    async def get_recent_posts(self, channel_username, days=1):
+    async def get_recent_posts(self, channel_username, days=1, hours=None):
         """
         Get recent posts from a channel
         
         Args:
             channel_username: Channel username (without @)
             days: Number of days to look back (default: 1)
+            hours: Number of hours to look back (overrides days when set)
             
         Returns:
             list: List of posts with all required information
@@ -113,7 +116,10 @@ class TelegramParser:
             channel = await self.client.get_entity(channel_username)
             
             # Calculate the date threshold (timezone-aware to match Telegram timestamps)
-            date_threshold = datetime.now(timezone.utc) - timedelta(days=days)
+            if hours is not None:
+                date_threshold = datetime.now(timezone.utc) - timedelta(hours=hours)
+            else:
+                date_threshold = datetime.now(timezone.utc) - timedelta(days=days)
             
             collected_messages = []
             async for message in self.client.iter_messages(channel, limit=100):
@@ -385,44 +391,65 @@ class TelegramParser:
         
         return all_info
     
-    async def get_all_posts(self, channels, days=1):
+    async def get_all_posts(
+        self,
+        channels,
+        days=1,
+        hours=None,
+        batch_size=0,
+        per_channel_delay_range=(1, 1),
+        between_batch_delay_range=(0, 0)
+    ):
         """
         Get posts from all channels
         
         Args:
             channels: List of channel usernames
             days: Number of days to look back
+            hours: Number of hours to look back (overrides days when set)
             
         Returns:
             list: List of all posts from all channels
         """
         all_posts = []
-        flood_wait_seconds = None
+        self.last_flood_wait_seconds = 0
+        channels_list = list(channels)
 
-        for channel in channels:
-            if flood_wait_seconds is not None:
-                logger.warning(
-                    "Skipping posts fetch for %s due to active FloodWait (%ss)",
-                    channel,
-                    flood_wait_seconds
-                )
-                continue
+        if batch_size <= 0:
+            batch_size = len(channels_list) or 1
 
-            try:
-                posts = await self.get_recent_posts(channel, days)
-            except FloodWaitError as e:
-                flood_wait_seconds = getattr(e, 'seconds', None) or 0
-                logger.error(
-                    "Telegram FloodWait while fetching posts for '%s': %ss. "
-                    "Skipping remaining channels in this run.",
-                    channel,
-                    flood_wait_seconds
-                )
-                continue
+        min_delay, max_delay = per_channel_delay_range
+        if min_delay > max_delay:
+            min_delay, max_delay = max_delay, min_delay
 
-            all_posts.extend(posts)
-            # Small delay to avoid rate limiting
-            await asyncio.sleep(1)
+        batch_min_delay, batch_max_delay = between_batch_delay_range
+        if batch_min_delay > batch_max_delay:
+            batch_min_delay, batch_max_delay = batch_max_delay, batch_min_delay
+
+        for batch_start in range(0, len(channels_list), batch_size):
+            batch = channels_list[batch_start:batch_start + batch_size]
+
+            for channel in batch:
+                try:
+                    posts = await self.get_recent_posts(channel, days=days, hours=hours)
+                except FloodWaitError as e:
+                    self.last_flood_wait_seconds = getattr(e, 'seconds', None) or 0
+                    logger.error(
+                        "Telegram FloodWait while fetching posts for '%s': %ss. "
+                        "Stopping current run.",
+                        channel,
+                        self.last_flood_wait_seconds
+                    )
+                    return all_posts
+
+                all_posts.extend(posts)
+
+                if max_delay > 0:
+                    await asyncio.sleep(random.uniform(min_delay, max_delay))
+
+            is_last_batch = (batch_start + batch_size) >= len(channels_list)
+            if not is_last_batch and batch_max_delay > 0:
+                await asyncio.sleep(random.uniform(batch_min_delay, batch_max_delay))
         
         # Sort posts by date and time (newest first)
         all_posts.sort(key=lambda x: f"{x['date']} {x['time']}", reverse=True)

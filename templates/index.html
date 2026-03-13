@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Telegram Parser UI</title>
+  <style>
+    :root {
+      color-scheme: light;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 24px;
+      background: #f7f7f9;
+      color: #1d1d1f;
+    }
+    .card {
+      max-width: 820px;
+      margin: 0 auto;
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 24px;
+    }
+    p {
+      margin-top: 0;
+      color: #444;
+    }
+    label {
+      display: block;
+      margin: 12px 0 6px;
+      font-weight: 600;
+    }
+    textarea,
+    input[type="file"] {
+      width: 100%;
+      box-sizing: border-box;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 10px;
+      background: #fff;
+    }
+    textarea {
+      min-height: 220px;
+      resize: vertical;
+      font-family: Consolas, monospace;
+    }
+    button {
+      margin-top: 16px;
+      border: none;
+      border-radius: 8px;
+      background: #0b63f6;
+      color: white;
+      padding: 11px 16px;
+      font-size: 15px;
+      cursor: pointer;
+    }
+    button:disabled {
+      background: #8aaef0;
+      cursor: not-allowed;
+    }
+    #status {
+      margin-top: 14px;
+      font-size: 14px;
+      white-space: pre-line;
+    }
+    .ok {
+      color: #117d38;
+    }
+    .err {
+      color: #b3261e;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Парсинг Telegram каналов (10 часов)</h1>
+    <p>Вставьте каналы списком (по строкам, через запятую, @username или ссылками t.me) и/или загрузите .txt/.csv файл.</p>
+
+    <form id="parse-form">
+      <label for="channels">Список каналов</label>
+      <textarea id="channels" name="channels" placeholder="@channel_one&#10;https://t.me/channel_two&#10;channel_three"></textarea>
+
+      <label for="channels_file">Файл со списком каналов</label>
+      <input id="channels_file" name="channels_file" type="file" accept=".txt,.csv">
+
+      <button id="submit-btn" type="submit">Запустить один batch-парсинг</button>
+    </form>
+
+    <div id="status"></div>
+  </div>
+
+  <script>
+    const form = document.getElementById("parse-form");
+    const statusEl = document.getElementById("status");
+    const submitBtn = document.getElementById("submit-btn");
+    let cooldownEndsAtMs = 0;
+    let cooldownInterval = null;
+
+    function stopCooldownTimer() {
+      if (cooldownInterval) {
+        clearInterval(cooldownInterval);
+        cooldownInterval = null;
+      }
+    }
+
+    function startCooldownTimer(cooldownSeconds) {
+      stopCooldownTimer();
+      cooldownEndsAtMs = Date.now() + Math.max(0, cooldownSeconds) * 1000;
+      submitBtn.disabled = true;
+
+      const renderCooldown = () => {
+        const remaining = Math.max(0, Math.ceil((cooldownEndsAtMs - Date.now()) / 1000));
+        if (remaining <= 0) {
+          stopCooldownTimer();
+          submitBtn.disabled = false;
+          statusEl.className = "";
+          statusEl.textContent = "Cooldown завершен. Можно запускать парсинг снова.";
+          return;
+        }
+
+        statusEl.className = "err";
+        statusEl.textContent = `Ограничение Telegram (FloodWait). Повторите через ${remaining} сек.`;
+      };
+
+      renderCooldown();
+      cooldownInterval = setInterval(renderCooldown, 1000);
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const now = Date.now();
+      if (cooldownEndsAtMs > now) {
+        startCooldownTimer(Math.ceil((cooldownEndsAtMs - now) / 1000));
+        return;
+      }
+
+      statusEl.className = "";
+      statusEl.textContent = "Запуск парсинга... Это может занять несколько минут.";
+      submitBtn.disabled = true;
+
+      try {
+        const formData = new FormData(form);
+        const response = await fetch("/api/parse", {
+          method: "POST",
+          body: formData
+        });
+        const payload = await response.json();
+
+        if (!response.ok || !payload.ok) {
+          if (payload.cooldown_seconds) {
+            startCooldownTimer(payload.cooldown_seconds);
+            return;
+          }
+          statusEl.className = "err";
+          statusEl.textContent = `Ошибка: ${payload.error || "Неизвестная ошибка"}`;
+          return;
+        }
+
+        const result = payload.result;
+        statusEl.className = "ok";
+        statusEl.textContent =
+          `Готово.\n` +
+          `Каналов получено: ${result.channels_requested}\n` +
+          `Каналов обработано: ${result.channels_processed}\n` +
+          `Постов найдено: ${result.posts_found}\n` +
+          `Обновлено постов: ${result.updated_count}\n` +
+          `Добавлено новых: ${result.appended_count}\n` +
+          `Изменений статуса "Удален": ${result.deleted_changes}`;
+
+        if (result.cooldown_seconds) {
+          statusEl.textContent += `\nFloodWait: запуск заблокирован на ${result.cooldown_seconds} сек.`;
+          startCooldownTimer(result.cooldown_seconds);
+          return;
+        }
+      } catch (error) {
+        statusEl.className = "err";
+        statusEl.textContent = `Ошибка запроса: ${error}`;
+      } finally {
+        if (!cooldownInterval) {
+          submitBtn.disabled = false;
+        }
+      }
+    });
+  </script>
+</body>
+</html>

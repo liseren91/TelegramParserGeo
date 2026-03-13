@@ -40,6 +40,20 @@ GOOGLE_SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
 GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv('GOOGLE_SERVICE_ACCOUNT_FILE', 'service_account.json')
 GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON_BASE64')
 
+
+def _get_int_env(name, default_value, min_value=None):
+    """Read integer env var with fallback and optional lower bound."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default_value
+    try:
+        value = int(raw)
+    except ValueError:
+        return default_value
+    if min_value is not None and value < min_value:
+        return min_value
+    return value
+
 # Telegram channels to parse
 TELEGRAM_CHANNELS = [
     'hiaimedia',
@@ -169,6 +183,14 @@ POSTS_HEADERS = [
     'Комментарии',
     'Удален'
 ]
+
+# Parser throttling configuration
+PARSER_BATCH_SIZE = _get_int_env('PARSER_BATCH_SIZE', 5, min_value=1)
+PARSER_CHANNEL_DELAY_MIN_SEC = _get_int_env('PARSER_CHANNEL_DELAY_MIN_SEC', 7, min_value=0)
+PARSER_CHANNEL_DELAY_MAX_SEC = _get_int_env('PARSER_CHANNEL_DELAY_MAX_SEC', 10, min_value=0)
+PARSER_BATCH_DELAY_MIN_SEC = _get_int_env('PARSER_BATCH_DELAY_MIN_SEC', 120, min_value=0)
+PARSER_BATCH_DELAY_MAX_SEC = _get_int_env('PARSER_BATCH_DELAY_MAX_SEC', 180, min_value=0)
+PARSER_FLOOD_WAIT_BUFFER_SEC = _get_int_env('PARSER_FLOOD_WAIT_BUFFER_SEC', 90, min_value=0)
 
 # Track initialization issues for files reconstructed from Base64
 _SERVICE_ACCOUNT_INIT_ERROR = None
